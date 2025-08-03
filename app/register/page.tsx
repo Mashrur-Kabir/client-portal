@@ -38,7 +38,7 @@ export default function RegisterPage() {
     } else {
       toast({
         title: "Registration Successful",
-        description: "We are excited to have you with us!",
+        description: "We are excited to have you with us! Please confirm your email and login",
       })
       router.push("/dashboard")
     }

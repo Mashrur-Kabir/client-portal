@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import ProtectedRoute from "@/components/layout/protected-route"
 import { toast } from "sonner"
+import { checkIfEmailExists } from "@/lib/utils"
 
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
 
@@ -41,10 +42,10 @@ export default function ClientsPage() {
   const [open, setOpen] = useState(false)
   const [newClient, setNewClient] = useState({ name: "", email: "", phone: "", company: "" })
   const [adding, setAdding] = useState(false)
+  const [editingClient, setEditingClient] = useState<Client | null>(null)
 
   const fetchClients = async () => {
     setLoading(true)
-
     const {
       data: { user }
     } = await supabase.auth.getUser()
@@ -69,6 +70,30 @@ export default function ClientsPage() {
   useEffect(() => {
     fetchClients()
   }, [])
+
+  const handleEdit = (client: Client) => {
+    setEditingClient(client)
+    setNewClient({
+      name: client.name,
+      email: client.email,
+      phone: client.phone || "",
+      company: client.company || ""
+    })
+    setOpen(true)
+  }
+
+  const handleDelete = async (clientId: string) => {
+    const confirmDelete = confirm("Are you sure you want to delete this client?")
+    if (!confirmDelete) return
+
+    const { error } = await supabase.from("clients").delete().eq("id", clientId)
+    if (error) {
+      toast.error("Failed to delete client")
+    } else {
+      toast.success("Client deleted")
+      fetchClients()
+    }
+  }
 
   const filteredClients = clients.filter(
     (client) =>
@@ -99,8 +124,13 @@ export default function ClientsPage() {
               <h1 className="text-3xl font-montserrat font-bold">Clients</h1>
               <p className="text-muted-foreground mt-2">Manage your client relationships</p>
             </div>
-           {/* modal */}
-            <Dialog open={open} onOpenChange={setOpen}>
+            <Dialog open={open} onOpenChange={(v) => {
+              setOpen(v)
+              if (!v) {
+                setEditingClient(null)
+                setNewClient({ name: "", email: "", phone: "", company: "" })
+              }
+            }}>
               <DialogTrigger asChild>
                 <Button className="bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 transition-all duration-200 hover:scale-105">
                   <Plus className="w-4 h-4 mr-2" />
@@ -108,7 +138,9 @@ export default function ClientsPage() {
                 </Button>
               </DialogTrigger>
               <DialogContent className="glass-effect border border-border/30 backdrop-blur-xl animate-fade-in space-y-6">
-                <DialogTitle className="text-xl font-semibold font-montserrat">Add New Client</DialogTitle>
+                <DialogTitle className="text-xl font-semibold font-montserrat">
+                  {editingClient ? "Edit Client" : "Add New Client"}
+                </DialogTitle>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm block mb-1">Name</label>
@@ -124,6 +156,7 @@ export default function ClientsPage() {
                       value={newClient.email}
                       onChange={(e) => setNewClient({ ...newClient, email: e.target.value })}
                       placeholder="client@example.com"
+                      disabled={!!editingClient}
                     />
                   </div>
                   <div>
@@ -147,33 +180,56 @@ export default function ClientsPage() {
                   className="mt-4 bg-gradient-to-r from-pink-500 to-purple-500 hover:scale-105 transition"
                   disabled={adding}
                   onClick={async () => {
-                    if (!newClient.name) {
-                      toast.error("Client name is required")
+                    if (!newClient.name || !newClient.email) {
+                      toast.error("Client name and email are required")
                       return
                     }
                     setAdding(true)
-                    const { data: { user } } = await supabase.auth.getUser()
-                    const { error } = await supabase.from("clients").insert({
-                      user_id: user?.id,
-                      name: newClient.name,
-                      email: newClient.email,
-                      phone: newClient.phone,
-                      company: newClient.company
-                    })
+
+                    if (!editingClient) {
+                      const isValidEmail = await checkIfEmailExists(newClient.email)
+                      if (!isValidEmail) {
+                        toast.error("Email is not registered. Client must be a registered user.")
+                        setAdding(false)
+                        return
+                      }
+                    }
+
+                    let error
+                    if (editingClient) {
+                      ({ error } = await supabase.from("clients")
+                        .update({
+                          name: newClient.name,
+                          email: newClient.email,
+                          phone: newClient.phone,
+                          company: newClient.company
+                        })
+                        .eq("id", editingClient.id))
+                    } else {
+                      const { data: { user } } = await supabase.auth.getUser()
+                      ({ error } = await supabase.from("clients").insert({
+                        user_id: user?.id,
+                        name: newClient.name,
+                        email: newClient.email,
+                        phone: newClient.phone,
+                        company: newClient.company
+                      }))
+                    }
 
                     if (error) {
-                      toast.error("Failed to add client")
+                      toast.error(editingClient ? "Failed to update client" : "Failed to add client")
                     } else {
-                      toast.success("Client added")
-                      setNewClient({ name: "", email: "", phone: "", company: "" })
+                      toast.success(editingClient ? "Client updated" : "Client added")
                       fetchClients()
                       setOpen(false)
+                      setEditingClient(null)
+                      setNewClient({ name: "", email: "", phone: "", company: "" })
                     }
 
                     setAdding(false)
                   }}
                 >
-                  {adding ? "Adding..." : "Add Client"}
+                  {adding ? (editingClient ? "Updating..." : "Adding...") : (editingClient ? "Update Client" : "Add Client")}
                 </Button>
               </DialogContent>
             </Dialog>
@@ -229,9 +285,8 @@ export default function ClientsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent className="bg-card/90 backdrop-blur-xl border-border/50">
-                          <DropdownMenuItem>Edit Client</DropdownMenuItem>
-                          <DropdownMenuItem>Archive</DropdownMenuItem>
-                          <DropdownMenuItem className="text-red-400">Delete</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleEdit(client)}>Edit Client</DropdownMenuItem>
+                          <DropdownMenuItem className="text-red-400" onClick={() => handleDelete(client.id)}>Delete</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </div>
