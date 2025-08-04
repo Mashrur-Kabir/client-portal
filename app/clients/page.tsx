@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu"
 import ProtectedRoute from "@/components/layout/protected-route"
-import { toast } from "sonner"
+import { useToast } from "@/hooks/use-toast"
 import { checkIfEmailExists } from "@/lib/utils"
 
 import { Dialog, DialogContent, DialogTrigger, DialogTitle } from "@/components/ui/dialog"
@@ -39,7 +39,10 @@ export default function ClientsPage() {
   const [clients, setClients] = useState<Client[]>([])
   const [loading, setLoading] = useState(true)
 
+  const { toast } = useToast()
+
   const [open, setOpen] = useState(false)
+  const [confirmDeleteClientId, setConfirmDeleteClientId] = useState<string | null>(null)
   const [newClient, setNewClient] = useState({ name: "", email: "", phone: "", company: "" })
   const [adding, setAdding] = useState(false)
   const [editingClient, setEditingClient] = useState<Client | null>(null)
@@ -59,7 +62,11 @@ export default function ClientsPage() {
       .order("created_at", { ascending: false })
 
     if (error) {
-      toast.error("Failed to load clients")
+      toast({
+        variant: "destructive",
+        title: "Failed to load clients",
+        className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+      })
     } else {
       setClients(data || [])
     }
@@ -82,18 +89,12 @@ export default function ClientsPage() {
     setOpen(true)
   }
 
-  const handleDelete = async (clientId: string) => {
-    const confirmDelete = confirm("Are you sure you want to delete this client?")
-    if (!confirmDelete) return
+  const handleDelete = (clientId: string) => {
+    // Just store the ID of the client you want to delete,
+    // this will open the confirmation dialog
+    setConfirmDeleteClientId(clientId);
+  };
 
-    const { error } = await supabase.from("clients").delete().eq("id", clientId)
-    if (error) {
-      toast.error("Failed to delete client")
-    } else {
-      toast.success("Client deleted")
-      fetchClients()
-    }
-  }
 
   const filteredClients = clients.filter(
     (client) =>
@@ -181,7 +182,12 @@ export default function ClientsPage() {
                   disabled={adding}
                   onClick={async () => {
                     if (!newClient.name || !newClient.email) {
-                      toast.error("Client name and email are required")
+                      toast({
+                        variant: "destructive",
+                        title: "Missing Information",
+                        description: "Client name and email are required",
+                        className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                      })
                       return
                     }
                     setAdding(true)
@@ -189,7 +195,12 @@ export default function ClientsPage() {
                     if (!editingClient) {
                       const isValidEmail = await checkIfEmailExists(newClient.email)
                       if (!isValidEmail) {
-                        toast.error("Email is not registered. Client must be a registered user.")
+                        toast({
+                          variant: "destructive",
+                          title: "Email not registered",
+                          description: "Client must be a registered user.",
+                          className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                        })
                         setAdding(false)
                         return
                       }
@@ -206,20 +217,45 @@ export default function ClientsPage() {
                         })
                         .eq("id", editingClient.id))
                     } else {
-                      const { data: { user } } = await supabase.auth.getUser()
-                      ({ error } = await supabase.from("clients").insert({
-                        user_id: user?.id,
+                      const {
+                        data: { user },
+                        error: userError
+                      } = await supabase.auth.getUser()
+
+                      if (userError || !user) {
+                        toast({
+                          variant: "destructive",
+                          title: "Failed to identify current user",
+                          description: "Please refresh and try again.",
+                          className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                        })
+                        setAdding(false)
+                        return
+                      }
+
+                      const { error: insertError } = await supabase.from("clients").insert({
+                        user_id: user.id,
                         name: newClient.name,
                         email: newClient.email,
                         phone: newClient.phone,
                         company: newClient.company
-                      }))
+                      })
+
+                      error = insertError
                     }
 
                     if (error) {
-                      toast.error(editingClient ? "Failed to update client" : "Failed to add client")
+                      toast({
+                        variant: "destructive",
+                        title: editingClient ? "Failed to update client" : "Failed to add client",
+                        className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                      })
                     } else {
-                      toast.success(editingClient ? "Client updated" : "Client added")
+                      toast({
+                        variant: "default",
+                        title: editingClient ? "Client updated" : "Client added",
+                        className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 border border-green-300"
+                      })
                       fetchClients()
                       setOpen(false)
                       setEditingClient(null)
@@ -233,6 +269,50 @@ export default function ClientsPage() {
                 </Button>
               </DialogContent>
             </Dialog>
+
+            <Dialog open={!!confirmDeleteClientId} onOpenChange={(v) => !v && setConfirmDeleteClientId(null)}>
+              <DialogContent className="glass-effect border border-border/30 backdrop-blur-xl animate-fade-in space-y-4 text-center">
+                <DialogTitle className="text-xl font-semibold font-montserrat">Confirm Deletion</DialogTitle>
+                <p className="text-muted-foreground text-sm">
+                  Are you sure you want to delete this client? This action cannot be undone.
+                </p>
+                <div className="flex justify-center gap-4 mt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => setConfirmDeleteClientId(null)}
+                    className="hover:scale-105 transition"
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    className="hover:scale-105 transition"
+                    onClick={async () => {
+                      if (!confirmDeleteClientId) return
+                      const { error } = await supabase.from("clients").delete().eq("id", confirmDeleteClientId)
+                      if (error) {
+                        toast({
+                          title: "Failed to delete client",
+                          description: error.message,
+                          className: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100"
+                        })
+                      } else {
+                        toast({
+                          title: "Delete successful",
+                          description: "The client is removed",
+                          className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100 border border-green-300"
+                        })
+                        fetchClients()
+                      }
+                      setConfirmDeleteClientId(null)
+                    }}
+                  >
+                    Yes, Delete
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+
           </div>
 
           {/* Search */}

@@ -30,9 +30,10 @@ export default function RegisterPage() {
     const email = (document.getElementById("email") as HTMLInputElement).value
     const password = (document.getElementById("password") as HTMLInputElement).value
 
-    const { error } = await supabase.auth.signUp({ email, password })
+    const { data, error } = await supabase.auth.signUp({ email, password })
 
     if (error) {
+      console.error("Signup failed:", error.message);
       setError(error.message)
       setIsLoading(false)
     } else {
