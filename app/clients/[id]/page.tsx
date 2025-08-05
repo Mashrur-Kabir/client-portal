@@ -1,6 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useParams } from "next/navigation"
+import Link from "next/link"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -21,73 +23,19 @@ import {
   AlertCircle,
 } from "lucide-react"
 
-// Mock data for the client
-const client = {
-  id: 1,
-  name: "Acme Corporation",
-  email: "contact@acme.com",
-  phone: "+1 (555) 123-4567",
-  joinDate: "January 15, 2024",
-  avatar: "/placeholder-user.jpg",
-}
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs"
+import type { Database } from "@/lib/database.types" // adjust path if needed
 
-const projects = [
-  {
-    id: 1,
-    name: "Brand Identity Design",
-    description: "Complete brand identity package including logo, colors, and guidelines",
-    progress: 85,
-    status: "In Progress",
-    dueDate: "2024-01-15",
-    deliverables: [
-      { name: "Logo Design", status: "Completed", file: "logo-final.ai" },
-      { name: "Color Palette", status: "Completed", file: "colors.pdf" },
-      { name: "Brand Guidelines", status: "In Progress", file: null },
-      { name: "Business Cards", status: "Pending", file: null },
-    ],
-  },
-  {
-    id: 2,
-    name: "Website Redesign",
-    description: "Modern, responsive website redesign with improved UX",
-    progress: 60,
-    status: "In Progress",
-    dueDate: "2024-02-01",
-    deliverables: [
-      { name: "Wireframes", status: "Completed", file: "wireframes.pdf" },
-      { name: "UI Design", status: "In Progress", file: null },
-      { name: "Development", status: "Pending", file: null },
-    ],
-  },
-]
-
-const files = [
-  { name: "Project Brief.pdf", size: "2.4 MB", uploadDate: "2024-01-10", type: "pdf" },
-  { name: "Logo Concepts.zip", size: "15.2 MB", uploadDate: "2024-01-12", type: "zip" },
-  { name: "Brand Colors.pdf", size: "1.1 MB", uploadDate: "2024-01-14", type: "pdf" },
-]
-
-const comments = [
-  {
-    id: 1,
-    author: "John Doe",
-    avatar: "/placeholder-user.jpg",
-    content:
-      "The logo concepts look great! I particularly like option 2. Can we see some variations with different colors?",
-    timestamp: "2 hours ago",
-    isClient: true,
-  },
-  {
-    id: 2,
-    author: "You",
-    avatar: "/placeholder-user.jpg",
-    content: "I'll prepare some color variations for option 2. Should have them ready by tomorrow.",
-    timestamp: "1 hour ago",
-    isClient: false,
-  },
-]
 
 export default function ClientPortalPage() {
+
+  const supabase = createClientComponentClient<Database>()
+  const [client, setClient] = useState<any>(null) // or use a proper type later
+
+  const { id: clientId } = useParams()
+
+  const [files, setFiles] = useState<any[]>([])
+
   const [newComment, setNewComment] = useState("")
 
   const getStatusIcon = (status: string) => {
@@ -116,6 +64,72 @@ export default function ClientPortalPage() {
     }
   }
 
+// 👇 1. Load client from Supabase
+useEffect(() => {
+  if (!clientId) return;
+
+  const fetchClient = async () => {
+    const { data, error } = await supabase
+      .from("clients")
+      .select("*")
+      .eq("id", clientId)
+      .single();
+
+    if (error) {
+      console.error("Error fetching client:", error);
+    } else {
+      setClient(data);
+    }
+  };
+
+  fetchClient();
+}, [clientId]);
+
+// 👇 2. Load files from Supabase Storage
+useEffect(() => {
+  const fetchFiles = async () => {
+    if (!clientId) return
+
+    const { data, error } = await supabase.storage
+      .from("client_files")
+      .list(clientId as string, {
+        limit: 100,
+        offset: 0,
+        sortBy: { column: "created_at", order: "desc" },
+      })
+
+    if (error) {
+      console.error("Error fetching files:", error)
+      return
+    }
+
+    // You can generate public URLs here if needed
+    const filesWithUrls = await Promise.all(
+      (data ?? []).map(async (file) => {
+        const { data: urlData } = supabase.storage
+          .from("client_files")
+          .getPublicUrl(`${clientId}/${file.name}`)
+
+        return {
+          name: file.name,
+          size: `${(file.metadata?.size / 1024 / 1024).toFixed(2)} MB`,
+          uploadDate: new Date(file.created_at).toLocaleDateString(),
+          url: urlData?.publicUrl,
+        }
+      })
+    )
+    setFiles(filesWithUrls)
+  }
+  fetchFiles()
+}, [clientId])
+
+  if (!client) {
+    return (
+      <DashboardLayout>
+        <div className="p-6 text-muted-foreground animate-pulse">Loading client info...</div>
+      </DashboardLayout>
+    )
+  }
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -124,32 +138,39 @@ export default function ClientPortalPage() {
           <CardContent className="p-6">
             <div className="flex items-center space-x-4">
               <Avatar className="h-16 w-16">
-                <AvatarImage src={client.avatar || "/placeholder.svg"} alt={client.name} />
+                <AvatarImage src={client?.avatar || "/placeholder.svg"} alt={client?.name} />
                 <AvatarFallback className="bg-gradient-to-br from-pink-500 to-purple-500 text-white text-xl">
-                  {client.name
+                  {client?.name
                     .split(" ")
                     .map((n) => n[0])
                     .join("")}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1">
-                <h1 className="text-2xl font-montserrat font-bold">{client.name}</h1>
+                <h1 className="text-2xl font-montserrat font-bold">{client?.name}</h1>
                 <div className="flex items-center space-x-4 mt-2 text-sm text-muted-foreground">
                   <div className="flex items-center">
                     <Mail className="w-4 h-4 mr-1" />
-                    {client.email}
+                    {client?.email}
                   </div>
                   <div className="flex items-center">
                     <Phone className="w-4 h-4 mr-1" />
-                    {client.phone}
+                    {client?.phone}
                   </div>
                   <div className="flex items-center">
                     <Calendar className="w-4 h-4 mr-1" />
-                    Client since {client.joinDate}
+                    Client since {new Date(client?.created_at).toLocaleDateString()}
                   </div>
                 </div>
               </div>
             </div>
+            {clientId && (
+              <Link href={`/clients/${clientId}/projects`}>
+                <Button className="mt-4 bg-gradient-to-r from-pink-500 to-purple-500 text-white">
+                  View Projects
+                </Button>
+              </Link>
+            )}
           </CardContent>
         </Card>
 
