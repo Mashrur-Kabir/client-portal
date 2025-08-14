@@ -31,12 +31,11 @@ export default function ClientPortalPage() {
 
   const supabase = createClientComponentClient<Database>()
   const [client, setClient] = useState<any>(null) // or use a proper type later
-
   const { id: clientId } = useParams()
-
   const [files, setFiles] = useState<any[]>([])
-
   const [newComment, setNewComment] = useState("")
+  const [projects, setProjects] = useState<any[]>([])
+  const [comments, setComments] = useState<any[]>([])
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -66,17 +65,25 @@ export default function ClientPortalPage() {
 
 // 👇 1. Load client from Supabase
 useEffect(() => {
-  if (!clientId) return;
-
   const fetchClient = async () => {
+    if (!clientId) return;
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
+    console.log("Logged in user ID:", user?.id);
+    if (!user) return;
+
     const { data, error } = await supabase
       .from("clients")
       .select("*")
-      .eq("id", clientId)
+      .eq("id", Array.isArray(clientId) ? clientId[0] : clientId) // ensure string
+      .eq("user_id", user.id) // make sure it's owned by this user
       .single();
 
     if (error) {
       console.error("Error fetching client:", error);
+    } else if (!data) {
+      console.warn("Client not found for id:", clientId);
     } else {
       setClient(data);
     }
@@ -84,6 +91,7 @@ useEffect(() => {
 
   fetchClient();
 }, [clientId]);
+
 
 // 👇 2. Load files from Supabase Storage
 useEffect(() => {
@@ -121,6 +129,47 @@ useEffect(() => {
     setFiles(filesWithUrls)
   }
   fetchFiles()
+}, [clientId])
+
+// 👇 3. Load projects associated with the client
+useEffect(() => {
+  const fetchProjects = async () => {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", Array.isArray(clientId) ? clientId[0] : clientId)
+
+    if (error) {
+      console.error("Error fetching projects:", error)
+    } else {
+      setProjects(data)
+    }
+  }
+
+  fetchProjects()
+}, [clientId])
+
+// 👇 4. Load comments for the client
+useEffect(() => {
+  const fetchComments = async () => {
+    if (!clientId) return
+
+    const { data, error } = await supabase
+      .from("comments")
+      .select("*")
+      .eq("id", Array.isArray(clientId) ? clientId[0] : clientId)
+      .order("timestamp", { ascending: false }) 
+
+    if (error) {
+      console.error("Error fetching comments:", error)
+    } else {
+      setComments(data)
+    }
+  }
+
+  fetchComments()
 }, [clientId])
 
   if (!client) {
@@ -237,25 +286,26 @@ useEffect(() => {
                   {comments.map((comment) => (
                     <div
                       key={comment.id}
-                      className={`flex space-x-3 ${comment.isClient ? "" : "flex-row-reverse space-x-reverse"}`}
+                      className={`flex space-x-3 ${comment.is_client ? "" : "flex-row-reverse space-x-reverse"}`}
                     >
                       <Avatar className="h-8 w-8">
-                        <AvatarImage src={comment.avatar || "/placeholder.svg"} alt={comment.author} />
+                        <AvatarImage src="/placeholder-user.jpg" alt={comment.author_name} />
                         <AvatarFallback className="bg-gradient-to-br from-pink-500 to-purple-500 text-white text-xs">
-                          {comment.author
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
+                          {comment.author_name?.split(" ").map((n) => n[0]).join("")}
                         </AvatarFallback>
                       </Avatar>
-                      <div className={`flex-1 ${comment.isClient ? "" : "text-right"}`}>
+                      <div className={`flex-1 ${comment.is_client ? "" : "text-right"}`}>
                         <div
-                          className={`p-3 rounded-lg ${comment.isClient ? "bg-background/50" : "bg-gradient-to-r from-pink-500/20 to-purple-500/20"}`}
+                          className={`p-3 rounded-lg ${
+                            comment.is_client
+                              ? "bg-background/50"
+                              : "bg-gradient-to-r from-pink-500/20 to-purple-500/20"
+                          }`}
                         >
                           <p className="text-sm">{comment.content}</p>
                         </div>
                         <p className="text-xs text-muted-foreground mt-1">
-                          {comment.author} • {comment.timestamp}
+                          {comment.author} • {new Date(comment.timestamp).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -286,10 +336,37 @@ useEffect(() => {
                 <CardDescription>Shared documents and assets</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <Button className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600">
-                  <Upload className="w-4 h-4 mr-2" />
-                  Upload File
-                </Button>
+                <input
+                  type="file"
+                  id="file-upload"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0]
+                    if (!file || !clientId) return
+
+                    const filePath = `${clientId}/${file.name}`
+                    const { error } = await supabase.storage
+                      .from("client_files")
+                      .upload(filePath, file, {
+                        upsert: true, // allow overwrite
+                      })
+
+                    if (error) {
+                      console.error("Upload failed:", error)
+                    } else {
+                      alert("File uploaded successfully!")
+                      // Optionally, refresh file list
+                    }
+                  }}
+                />
+                <label htmlFor="file-upload">
+                  <Button
+                    className="w-full bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 cursor-pointer"
+                  >
+                    <Upload className="w-4 h-4 mr-2" />
+                    Upload File
+                  </Button>
+                </label>
 
                 <div className="space-y-2">
                   {files.map((file, index) => (
